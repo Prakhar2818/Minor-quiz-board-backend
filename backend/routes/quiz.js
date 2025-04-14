@@ -1,37 +1,31 @@
 const router = require("express").Router();
 const Quiz = require("../models/Quiz");
 
+function generateUniqueCode() {
+  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+  return code;
+}
+
 // Create Quiz endpoint
 router.post("/create", async (req, res) => {
   try {
-    const { title, category, questions, userId } = req.body;
+    const { title, category, questions, userId, createdBy, creatorName } = req.body;
 
-    // Validate input
-    if (!title || !category || !questions || questions.length === 0) {
-      return res.status(400).json({ 
-        error: 'Missing required fields' 
+    // Validate required fields
+    if (!title || !category || !questions || !createdBy || !creatorName) {
+      return res.status(400).json({
+        error: 'Missing required fields'
       });
     }
 
-    // Validate questions format
-    for (const question of questions) {
-      if (!question.text || !question.type || !question.correctAnswer) {
-        return res.status(400).json({
-          error: 'Invalid question format'
-        });
-      }
-      // Validate multiple choice questions have options
-      if (question.type === 'multiple' && (!question.options || question.options.length < 2)) {
-        return res.status(400).json({
-          error: 'Multiple choice questions must have at least 2 options'
-        });
-      }
-    }
-
     // Generate a unique code
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const code = generateUniqueCode();
 
-    // Create new quiz
+    // Create new quiz with updated schema
     const quiz = new Quiz({
       code,
       title,
@@ -41,27 +35,27 @@ router.post("/create", async (req, res) => {
         type: q.type,
         options: q.options || [],
         correctAnswer: q.correctAnswer,
-        timeLimit: q.timeLimit || 30 // default 30 seconds per question
+        timeLimit: q.timeLimit || 30
       })),
-      status: "waiting",
-      participants: [],
-      scores: [],
-      createdBy: userId
+      createdBy,
+      creatorName,
+      status: 'pending',
+      participants: []
     });
 
     await quiz.save();
 
-    res.status(201).json({ 
-      message: 'Quiz created successfully',
+    res.status(201).json({
+      success: true,
       code: quiz.code,
-      quizId: quiz._id
+      message: 'Quiz created successfully'
     });
 
   } catch (error) {
     console.error('Quiz creation error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to create quiz',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -69,19 +63,23 @@ router.post("/create", async (req, res) => {
 // Get quiz details (without answers)
 router.get("/:code", async (req, res) => {
   try {
+    const { userId } = req.query;
     const quiz = await Quiz.findOne({ code: req.params.code });
     
     if (!quiz) {
       return res.status(404).json({ error: "Quiz not found" });
     }
 
-    // Remove correct answers from response
-    const sanitizedQuestions = quiz.questions.map(q => ({
+    // Ensure questions exists and is an array before mapping
+    const sanitizedQuestions = (quiz.questions || []).map(q => ({
       text: q.text,
       type: q.type,
-      options: q.options,
-      timeLimit: q.timeLimit
+      options: q.options || [],
+      timeLimit: q.timeLimit || 30
     }));
+
+    // Ensure participants exists before getting length
+    const participantCount = quiz.participants ? quiz.participants.length : 0;
 
     res.json({
       code: quiz.code,
@@ -89,24 +87,31 @@ router.get("/:code", async (req, res) => {
       category: quiz.category,
       questions: sanitizedQuestions,
       status: quiz.status,
-      participantCount: quiz.participants.length
+      participantCount: participantCount,
+      creatorName: quiz.creatorName,
+      createdBy: quiz.createdBy,
+      isCreator: quiz.createdBy === userId
     });
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch quiz" });
+    console.error('Error fetching quiz:', error);
+    res.status(500).json({ 
+      error: "Failed to fetch quiz",
+      details: error.message 
+    });
   }
 });
 
 // Get quiz details for creator (with answers)
 router.get("/:code/admin", async (req, res) => {
   try {
-    const { userId } = req.body; // Assuming you're passing userId in request
+    const { createdBy } = req.body;
     const quiz = await Quiz.findOne({ code: req.params.code });
     
     if (!quiz) {
       return res.status(404).json({ error: "Quiz not found" });
     }
 
-    if (quiz.createdBy !== userId) {
+    if (quiz.createdBy !== createdBy) {
       return res.status(403).json({ error: "Unauthorized access" });
     }
 
@@ -118,47 +123,112 @@ router.get("/:code/admin", async (req, res) => {
 
 router.post("/join", async (req, res) => {
   try {
-    const { code, userId } = req.body;
+    const { code, userId, username } = req.body;
+    
+    // Validate required fields
+    if (!code || !userId || !username) {
+      return res.status(400).json({
+        error: 'Missing required fields'
+      });
+    }
+
     const quiz = await Quiz.findOne({ code });
     
     if (!quiz) {
       return res.status(404).json({ error: "Quiz not found" });
     }
 
-    if (quiz.status !== 'waiting') {
+    if (quiz.status !== 'pending') {
       return res.status(400).json({ error: "Quiz has already started" });
     }
 
-    if (!quiz.participants.includes(userId)) {
-      quiz.participants.push(userId);
-      await quiz.save();
-    }
+    // Check if user already exists in participants
+    const existingParticipant = quiz.participants.find(p => p.userId === userId);
+    if (!existingParticipant) {
+      // Create a new participant document that matches the schema
+      const newParticipant = {
+        userId: userId,
+        username: username,
+        score: 0
+      };
 
-    // Send initial quiz data without answers
-    const sanitizedQuestions = quiz.questions.map(q => ({
-      text: q.text,
-      type: q.type,
-      options: q.options,
-      timeLimit: q.timeLimit
-    }));
+      // Use findOneAndUpdate to atomically update the quiz
+      const updatedQuiz = await Quiz.findOneAndUpdate(
+        { code },
+        { 
+          $push: { participants: newParticipant }
+        },
+        { 
+          new: true,      // Return the updated document
+          runValidators: true  // Run schema validators
+        }
+      );
 
-    res.json({ 
-      message: "Joined quiz successfully",
-      quiz: {
-        title: quiz.title,
-        category: quiz.category,
-        questions: sanitizedQuestions,
-        participantCount: quiz.participants.length
+      if (!updatedQuiz) {
+        return res.status(404).json({ error: "Failed to update quiz" });
       }
-    });
+
+      // Sanitize questions for response
+      const sanitizedQuestions = updatedQuiz.questions.map(q => ({
+        text: q.text,
+        type: q.type,
+        options: q.options || [],
+        timeLimit: q.timeLimit || 30
+      }));
+
+      return res.json({ 
+        success: true,
+        message: "Joined quiz successfully",
+        quiz: {
+          title: updatedQuiz.title,
+          category: updatedQuiz.category,
+          questions: sanitizedQuestions,
+          participants: updatedQuiz.participants,
+          participantCount: updatedQuiz.participants.length,
+          status: updatedQuiz.status,
+          creatorName: updatedQuiz.creatorName,
+          createdBy: updatedQuiz.createdBy,
+          code: updatedQuiz.code
+        }
+      });
+    } else {
+      // User already exists in participants, just return the quiz data
+      const sanitizedQuestions = quiz.questions.map(q => ({
+        text: q.text,
+        type: q.type,
+        options: q.options || [],
+        timeLimit: q.timeLimit || 30
+      }));
+
+      return res.json({ 
+        success: true,
+        message: "Already joined quiz",
+        quiz: {
+          title: quiz.title,
+          category: quiz.category,
+          questions: sanitizedQuestions,
+          participants: quiz.participants,
+          participantCount: quiz.participants.length,
+          status: quiz.status,
+          creatorName: quiz.creatorName,
+          createdBy: quiz.createdBy,
+          code: quiz.code
+        }
+      });
+    }
   } catch (error) {
-    res.status(500).json({ error: "Failed to join quiz" });
+    console.error("Join quiz error:", error);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to join quiz",
+      details: error.message 
+    });
   }
 });
 
 router.post("/start", async (req, res) => {
   try {
-    const { code, userId } = req.body;
+    const { code, creatorId } = req.body; // Changed from userId
     const quiz = await Quiz.findOne({ code });
     
     if (!quiz) {
@@ -166,7 +236,7 @@ router.post("/start", async (req, res) => {
     }
 
     // Verify creator
-    if (quiz.createdBy !== userId) {
+    if (quiz.createdBy !== createdBy) { // Changed from createdBy
       return res.status(403).json({ error: "Only quiz creator can start the quiz" });
     }
 
@@ -247,7 +317,7 @@ router.get("/list", async (req, res) => {
       title: 1,
       category: 1,
       status: 1,
-      createdBy: 1,
+      createdBy: 1, // Changed from createdBy
       participantCount: { $size: "$participants" }
     });
     res.json(quizzes);
