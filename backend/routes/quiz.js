@@ -228,20 +228,46 @@ router.post("/join", async (req, res) => {
 
 router.post("/start", async (req, res) => {
   try {
-    const { code, creatorId } = req.body; // Changed from userId
+    const { code, creatorName } = req.body; // Match the frontend request
+    
+    console.log("Start quiz request:", { code, creatorName }); // Debug log
+    
+    if (!code || !creatorName) {
+      return res.status(400).json({ 
+        success: false,
+        error: "Missing required fields" 
+      });
+    }
+
     const quiz = await Quiz.findOne({ code });
     
     if (!quiz) {
-      return res.status(404).json({ error: "Quiz not found" });
+      return res.status(404).json({ 
+        success: false,
+        error: "Quiz not found" 
+      });
     }
 
-    // Verify creator
-    if (quiz.createdBy !== createdBy) { // Changed from createdBy
-      return res.status(403).json({ error: "Only quiz creator can start the quiz" });
+    // Verify creator using creatorName
+    if (quiz.creatorName !== creatorName) {
+      return res.status(403).json({ 
+        success: false,
+        error: "Only quiz creator can start the quiz" 
+      });
     }
 
-    if (quiz.participants.length === 0) {
-      return res.status(400).json({ error: "Cannot start quiz with no participants" });
+    if (quiz.status === 'active') {
+      return res.status(400).json({ 
+        success: false,
+        error: "Quiz is already started" 
+      });
+    }
+
+    if (quiz.participants.length < 1) {
+      return res.status(400).json({ 
+        success: false,
+        error: "Cannot start quiz with no participants" 
+      });
     }
 
     // Update quiz status
@@ -254,7 +280,7 @@ router.post("/start", async (req, res) => {
       text: q.text,
       type: q.type,
       options: q.options,
-      timeLimit: q.timeLimit
+      timeLimit: q.timeLimit || 30 // Default time limit if not set
     }));
 
     res.json({
@@ -264,7 +290,11 @@ router.post("/start", async (req, res) => {
     });
   } catch (error) {
     console.error('Start quiz error:', error);
-    res.status(500).json({ error: "Failed to start quiz" });
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to start quiz",
+      details: error.message 
+    });
   }
 });
 
