@@ -356,6 +356,15 @@ router.get("/list", async (req, res) => {
   }
 });
 
+router.get("/check", async (req, res) => {
+  try {
+    
+    res.json("quizzes");
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch quizzes" });
+  }
+});
+
 router.post("/submit", async (req, res) => {
   try {
     const { code, userId, score } = req.body;
