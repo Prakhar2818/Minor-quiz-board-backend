@@ -160,13 +160,17 @@ const socketHandler = (io) => {
           return;
         }
 
-        // Notify all players in the room that the quiz has ended
+        // Calculate final scores and sort them
+        const finalScores = Array.from(room.scores, ([username, score]) => ({
+          username,
+          score
+        })).sort((a, b) => b.score - a.score);
+
+        // Notify all players in the room that the quiz has ended and send redirect signal
         io.to(code).emit("quiz-ended", {
           message: "Quiz has been ended by the creator",
-          finalScores: Array.from(room.scores, ([username, score]) => ({
-            username,
-            score
-          })).sort((a, b) => b.score - a.score)
+          finalScores,
+          redirect: true // Add this flag to trigger redirect
         });
 
         // Clean up the room
