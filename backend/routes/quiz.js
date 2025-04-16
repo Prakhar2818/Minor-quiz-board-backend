@@ -356,15 +356,6 @@ router.get("/list", async (req, res) => {
   }
 });
 
-router.get("/check", async (req, res) => {
-  try {
-    
-    res.json("quizzes");
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch quizzes" });
-  }
-});
-
 router.post("/submit", async (req, res) => {
   try {
     const { code, userId, score } = req.body;
@@ -408,6 +399,70 @@ router.get("/leaderboard/:code", async (req, res) => {
     res.json(leaderboard);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch leaderboard" });
+  }
+});
+
+router.post("/:code/end", async (req, res) => {
+  try {
+    const { code, createdBy } = req.body;
+    
+    // Only check for code and createdBy
+    if (!code || !createdBy) {
+      return res.status(400).json({ 
+        success: false,
+        error: "Missing required fields" 
+      });
+    }
+
+    const quiz = await Quiz.findOne({ code });
+    
+    if (!quiz) {
+      return res.status(404).json({ 
+        success: false,
+        error: "Quiz not found" 
+      });
+    }
+
+    // Strict verification that only the creator can end the quiz
+    if (quiz.createdBy !== createdBy) {
+      return res.status(403).json({ 
+        success: false,
+        error: "Only quiz creator can end the quiz" 
+      });
+    }
+
+    if (quiz.status === 'completed') {
+      return res.status(400).json({ 
+        success: false,
+        error: "Quiz is already completed" 
+      });
+    }
+
+    // Update quiz status
+    quiz.status = 'completed';
+    quiz.endTime = new Date();
+    await quiz.save();
+
+    // Calculate final scores and rankings
+    const finalScores = quiz.participants.map(participant => ({
+      userId: participant.userId,
+      username: participant.username,
+      score: participant.score
+    })).sort((a, b) => b.score - a.score);
+
+    res.json({
+      success: true,
+      message: "Quiz ended successfully",
+      finalScores
+    });
+
+  } catch (error) {
+    console.error('End quiz error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to end quiz",
+      details: error.message 
+    });
   }
 });
 

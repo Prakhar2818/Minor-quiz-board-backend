@@ -145,6 +145,38 @@ const socketHandler = (io) => {
       console.log("Client disconnected:", socket.id);
       handlePlayerDisconnect(socket);
     });
+
+    socket.on("end-quiz", ({ code, createdBy }) => {
+      try {
+        const room = rooms.get(code);
+        if (!room) {
+          socket.emit("quiz-error", { message: "Room not found" });
+          return;
+        }
+
+        // Strict verification that only the creator can end the quiz
+        if (room.createdBy !== createdBy) {
+          socket.emit("quiz-error", { message: "Only quiz creator can end the quiz" });
+          return;
+        }
+
+        // Notify all players in the room that the quiz has ended
+        io.to(code).emit("quiz-ended", {
+          message: "Quiz has been ended by the creator",
+          finalScores: Array.from(room.scores, ([username, score]) => ({
+            username,
+            score
+          })).sort((a, b) => b.score - a.score)
+        });
+
+        // Clean up the room
+        rooms.delete(code);
+
+      } catch (error) {
+        console.error('End quiz socket error:', error);
+        socket.emit("quiz-error", { message: "Failed to end quiz" });
+      }
+    });
   });
 
   // Helper function to handle player disconnection
