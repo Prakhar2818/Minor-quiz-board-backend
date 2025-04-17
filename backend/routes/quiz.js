@@ -389,16 +389,32 @@ router.get("/leaderboard/:code", async (req, res) => {
       return res.status(404).json({ error: "Quiz not found" });
     }
 
-    const leaderboard = quiz.scores
+    // Get scores from participants instead of scores array
+    const leaderboard = quiz.participants
+      .map(participant => ({
+        userId: participant.userId,
+        username: participant.username,
+        score: participant.score || 0
+      }))
       .sort((a, b) => b.score - a.score)
-      .map((score, index) => ({
-        ...score.toObject(),
+      .map((entry, index) => ({
+        ...entry,
         rank: index + 1
       }));
 
-    res.json(leaderboard);
+    res.json({
+      success: true,
+      leaderboard,
+      quizTitle: quiz.title,
+      quizStatus: quiz.status
+    });
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch leaderboard" });
+    console.error('Error fetching leaderboard:', error);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to fetch leaderboard",
+      details: error.message 
+    });
   }
 });
 

@@ -46,29 +46,20 @@ const quizSchema = new mongoose.Schema({
   },
   participants: [participantSchema],
   questions: [{
-    text: {
-      type: String,
-      required: true
-    },
-    type: {
-      type: String,
-      required: true
-    },
-    options: {
-      type: [String],
-      default: []
-    },
-    correctAnswer: {
-      type: String,
-      required: true
-    },
-    timeLimit: {
-      type: Number,
-      default: 30
-    }
+    text: { type: String, required: true },
+    type: { type: String, required: true },
+    options: { type: [String], default: [] },
+    correctAnswer: { type: String, required: true },
+    timeLimit: { type: Number, default: 30 }
+  }],
+  scores: [{
+    userId: String,
+    username: String,
+    score: Number,
+    submittedAt: { type: Date, default: Date.now }
   }]
 }, {
-  timestamps: true // Adds createdAt and updatedAt fields
+  timestamps: true
 });
 
 // Create indexes for better query performance
