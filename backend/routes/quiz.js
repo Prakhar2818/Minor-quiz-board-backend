@@ -298,45 +298,87 @@ router.post("/start", async (req, res) => {
   }
 });
 
-router.post("/submit-answer", async (req, res) => {
+router.post('/submit-answer', async (req, res) => {
   try {
     const { code, userId, questionIndex, answer } = req.body;
-    const quiz = await Quiz.findOne({ code });
     
+    // Find the quiz first
+    const quiz = await Quiz.findOne({ code });
     if (!quiz) {
-      return res.status(404).json({ error: "Quiz not found" });
+      return res.status(404).json({ 
+        success: false, 
+        error: "Quiz not found" 
+      });
     }
 
-    if (quiz.status !== "active") {
-      return res.status(400).json({ error: "Quiz is not active" });
-    }
-
+    // Get the current question
     const question = quiz.questions[questionIndex];
     if (!question) {
-      return res.status(400).json({ error: "Invalid question index" });
+      return res.status(400).json({ 
+        success: false, 
+        error: "Invalid question index" 
+      });
     }
 
+    // Calculate points
     const isCorrect = question.correctAnswer === answer;
-    
-    // Store the answer
-    if (!quiz.answers) quiz.answers = [];
-    quiz.answers.push({
-      userId,
-      questionIndex,
-      answer,
-      isCorrect,
-      timestamp: new Date()
-    });
-    await quiz.save();
+    const pointsEarned = isCorrect ? 10 : 0;
 
-    res.json({ 
-      success: true, 
+    // Update participant's score using findOneAndUpdate
+    const updatedQuiz = await Quiz.findOneAndUpdate(
+      { 
+        code: code,
+        "participants.userId": userId  // Find the specific participant
+      },
+      { 
+        $inc: { "participants.$.score": pointsEarned }  // Increment their score
+      },
+      { 
+        new: true,  // Return the updated document
+        runValidators: true
+      }
+    );
+
+    if (!updatedQuiz) {
+      return res.status(404).json({ 
+        success: false, 
+        error: "Failed to update score" 
+      });
+    }
+
+    // Find the updated participant score
+    const participant = updatedQuiz.participants.find(p => p.userId === userId);
+    const updatedScore = participant ? participant.score : 0;
+
+    // Also update the scores array
+    await Quiz.findOneAndUpdate(
+      { code: code },
+      {
+        $push: {
+          scores: {
+            userId: userId,
+            username: participant.username,
+            score: updatedScore,
+            submittedAt: new Date()
+          }
+        }
+      }
+    );
+
+    res.json({
+      success: true,
       correct: isCorrect,
-      correctAnswer: question.correctAnswer // Only send correct answer after submission
+      currentScore: updatedScore,
+      points: pointsEarned,
+      correctAnswer: question.correctAnswer
     });
+
   } catch (error) {
-    console.error('Submit answer error:', error);
-    res.status(500).json({ error: "Failed to submit answer" });
+    console.error('Error submitting answer:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to submit answer' 
+    });
   }
 });
 
@@ -356,58 +398,65 @@ router.get("/list", async (req, res) => {
   }
 });
 
-router.post("/submit", async (req, res) => {
-  try {
-    const { code, userId, score } = req.body;
-    const quiz = await Quiz.findOne({ code });
-    
-    if (!quiz) {
-      return res.status(404).json({ error: "Quiz not found" });
-    }
-
-    quiz.scores.push({ 
-      userId, 
-      score,
-      submittedAt: new Date()
-    });
-    await quiz.save();
-    
-    res.json({ 
-      message: "Score submitted successfully",
-      currentRank: quiz.scores.filter(s => s.score > score).length + 1
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to submit score" });
-  }
-});
 
 router.get("/leaderboard/:code", async (req, res) => {
   try {
     const quiz = await Quiz.findOne({ code: req.params.code });
     
     if (!quiz) {
-      return res.status(404).json({ error: "Quiz not found" });
+      return res.status(404).json({ 
+        success: false,
+        error: "Quiz not found" 
+      });
     }
 
-    // Get scores from participants instead of scores array
+    // Get detailed quiz information
+    const quizDetails = {
+      title: quiz.title,
+      category: quiz.category,
+      creatorName: quiz.creatorName,
+      status: quiz.status,
+      totalQuestions: quiz.questions.length,
+      totalParticipants: quiz.participants.length
+    };
+
+    // Get scores from participants and sort them
     const leaderboard = quiz.participants
       .map(participant => ({
         userId: participant.userId,
         username: participant.username,
-        score: participant.score || 0
+        score: participant.score || 0,
+        // Calculate percentage
+        percentage: ((participant.score || 0) / (quiz.questions.length * 10)) * 100
       }))
       .sort((a, b) => b.score - a.score)
       .map((entry, index) => ({
         ...entry,
-        rank: index + 1
+        rank: index + 1,
+        // Round percentage to 2 decimal places
+        percentage: Math.round(entry.percentage * 100) / 100
       }));
+
+    // Get submission history from scores array
+    const submissionHistory = quiz.scores.map(score => ({
+      userId: score.userId,
+      username: score.username,
+      score: score.score,
+      submittedAt: score.submittedAt
+    })).sort((a, b) => b.submittedAt - a.submittedAt);
 
     res.json({
       success: true,
-      leaderboard,
-      quizTitle: quiz.title,
-      quizStatus: quiz.status
+      quiz: quizDetails,
+      leaderboard: leaderboard,
+      submissionHistory: submissionHistory,
+      metadata: {
+        averageScore: leaderboard.reduce((acc, curr) => acc + curr.score, 0) / leaderboard.length || 0,
+        highestScore: leaderboard[0]?.score || 0,
+        lowestScore: leaderboard[leaderboard.length - 1]?.score || 0
+      }
     });
+
   } catch (error) {
     console.error('Error fetching leaderboard:', error);
     res.status(500).json({ 
