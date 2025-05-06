@@ -146,7 +146,7 @@ const socketHandler = (io) => {
       handlePlayerDisconnect(socket);
     });
 
-    socket.on("end-quiz", ({ code, createdBy }) => {
+    socket.on("end-quiz", ({ code, createdBy, userId }) => {
       try {
         const room = rooms.get(code);
         if (!room) {
@@ -161,16 +161,26 @@ const socketHandler = (io) => {
         }
 
         // Calculate final scores and sort them
-        const finalScores = Array.from(room.scores, ([username, score]) => ({
-          username,
-          score
-        })).sort((a, b) => b.score - a.score);
+        const finalScores = room.players
+          .map(player => ({
+            userId: player.userId,
+            username: player.username,
+            score: player.score || 0,
+            isCurrentUser: userId ? player.userId === userId : false
+          }))
+          .sort((a, b) => b.score - a.score);
 
-        // Notify all players in the room that the quiz has ended and send redirect signal
+        // Add rank to each score
+        finalScores.forEach((score, index) => {
+          score.rank = index + 1;
+        });
+
+        // Notify all players in the room that the quiz has ended and send leaderboard data
         io.to(code).emit("quiz-ended", {
           message: "Quiz has been ended by the creator",
           finalScores,
-          redirect: true // Add this flag to trigger redirect
+          showLeaderboard: true,
+          code
         });
 
         // Clean up the room

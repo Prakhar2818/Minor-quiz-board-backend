@@ -469,9 +469,9 @@ router.get("/leaderboard/:code", async (req, res) => {
 
 router.post("/:code/end", async (req, res) => {
   try {
-    const { code, createdBy } = req.body;
+    const { code, createdBy, userId } = req.body;
     
-    // Only check for code and createdBy
+    // Only check for code and createdBy for authorization
     if (!code || !createdBy) {
       return res.status(400).json({ 
         success: false,
@@ -512,13 +512,21 @@ router.post("/:code/end", async (req, res) => {
     const finalScores = quiz.participants.map(participant => ({
       userId: participant.userId,
       username: participant.username,
-      score: participant.score
+      score: participant.score || 0,
+      isCurrentUser: userId ? participant.userId === userId : false
     })).sort((a, b) => b.score - a.score);
+
+    // Add rank to each score
+    finalScores.forEach((score, index) => {
+      score.rank = index + 1;
+    });
 
     res.json({
       success: true,
       message: "Quiz ended successfully",
-      finalScores
+      finalScores,
+      showLeaderboard: true,
+      code: quiz.code
     });
 
   } catch (error) {
